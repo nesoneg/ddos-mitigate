@@ -1,0 +1,112 @@
+#!/usr/bin/awk -f
+
+# Fill main cycle with find credentials and add IP field in array a[$1]++
+
+# Apply:
+# ddos_mitigate some.log | iptables-restore
+
+# Or ever that (suitable for balancer):
+# ddos_mitigate some.log | ssh host sudo iptables-restore
+# Revert back:
+# iptables-restore /etc/iptables/rules.v4
+
+# Nginx applicate:
+# ddos_mitigate -v ngx=1 some.log > /var/tmp/ddos_blacklist
+
+# And add in nginx.conf:
+# include /var/tmp/ddos_blacklist;
+
+
+BEGIN {
+    # set max requiest per subnet in log
+    max=200
+
+}
+
+
+{
+    #if ($12 ~ /(WordPress|Mozilla)/ && $5 == "\"GET" && $6 == "/") {a[$1]++}
+    #if ($5 == "\"0000000\"" && $7 == 400) {a[$1]++}
+    #$6 ~ /login$/ && a[$1]++
+    #$14 ~ /^Siege/ && a[$1]++
+    #($7 ~ /bitrix/ && $9 == 404) && a[$1]++
+    #$9 == 404 && a[$1]++
+
+}
+
+
+END {
+
+    for (i in a) {
+        split(i, t, ".")
+        bad_network[sprintf("%d.%d.%d.0/24", t[1], t[2], t[3])] += a[i]
+    }
+    delete a
+
+
+    while (getline < "/etc/fail2ban/jail.local" > 0) {
+        if ($1 == "ignoreip") {
+            split($0, twl)
+            for (i in twl) {
+                if (twl[i] ~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/) {
+                    split(twl[i], t, ".")
+                    white_network[sprintf("%d.%d.%d.0/24", t[1], t[2], t[3])]++
+                }
+            }
+            delete twl
+            break
+        }
+    }
+    close("/etc/fail2ban/jail.local")
+
+
+    if (ngx == "") {
+        while ("iptables-save" | getline > 0) {
+            if ($2 == "INPUT" && $3 == "-s" && $6 == "DROP") {
+                current_bad_network[$4]
+            }
+        }
+        close("iptables-save")
+    }
+
+
+    for (i in bad_network) {
+        if (bad_network[i] > max && i in current_bad_network == 0 && i in white_network == 0) {
+            block[i]++
+        }
+    }
+
+
+    if (ngx) {
+
+        for (i in block) {
+            printf("deny %s;\n", i)
+        }
+
+        print("allow all;")
+
+    } else {
+
+        while ("iptables-save" | getline > 0) {
+
+            if ($1 == "*filter") { filter_chain_found=1 }
+            if ($1 == "*raw")    { filter_chain_found=0 }
+
+            if (filter_chain_found && $1 == "COMMIT") {
+                for (i in block) {
+                    printf("-I INPUT -s %s -j DROP\n", i)
+                }
+                print "COMMIT"
+
+            } else {
+                print
+
+            }
+
+        }
+
+        close("iptables-save")
+
+    }
+
+}
