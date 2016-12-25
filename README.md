@@ -8,7 +8,7 @@
 
 # Usage
 
-Fill main cycle with find credentials and add IP field in array a[$1]++
+Fill main cycle with find credentials and add IP field in array `a[$1]++`
 
 ## Netfilter (iptables)
 ```
